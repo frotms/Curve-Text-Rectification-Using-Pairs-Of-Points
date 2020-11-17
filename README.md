@@ -92,6 +92,10 @@ res, visualized_image = autoRectifier.run(image_data, points_list, interpolation
 
 ![](./images/vis_gt_57_1.jpg)
 
+![](./images/vis_gt_57_2.jpg)
+
+![](./images/vis_gt_57_3.jpg)
+
 ### failure
 
 ![](./images/vis_gt_46.jpg)
