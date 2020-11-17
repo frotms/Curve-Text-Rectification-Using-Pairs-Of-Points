@@ -17,6 +17,10 @@ This method is based on calibration technology of monocular vision. It depends o
 python3 test.py --image image_path --txt points_txt_path_corresponding_to_image
 ```
 
+```
+python3 test.py --image ./gt_86.jpg --txt gt_86.txt
+```
+
 or
 
 ```
