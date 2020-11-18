@@ -590,7 +590,7 @@ class AutoRectifier:
                 raise ValueError
 
         if ratio_width < 1.0 or ratio_height < 1.0:
-            raise ValueError('ratio_width and ratio_height cannot be smaller than 1, but got {}', (ratio_width, ratio_height))
+            raise ValueError('ratio_width and ratio_height cannot be smaller than 1, but got {}'.format((ratio_width, ratio_height)))
 
         res = []
         for points in points_list:
