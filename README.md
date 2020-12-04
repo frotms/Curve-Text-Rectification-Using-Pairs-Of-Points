@@ -14,20 +14,25 @@ This method is based on calibration technology of monocular vision. It depends o
 ## Usage
 
 ```
-python3 test.py --image image_path --txt points_txt_path_corresponding_to_image
+python3 test.py --image image_path --txt points_txt_path_corresponding_to_image --mode calibration
 ```
 
 ```
-python3 test.py --image ./data/test_images/gt_86.jpg --txt ./data/test_txt/gt_86.txt
+python3 test.py --image ./data/test_images/gt_86.jpg --txt ./data/test_txt/gt_86.txt --mode calibration
 ```
 
 or
 
 ```
-python3 curve_text_rectification.py
+python3 curve_text_rectification.py --mode homography
 ```
 
 Results will saved in `results` directory.
+
+| mode          | description                                                  |
+| ------------- | ------------------------------------------------------------ |
+| `calibration` | Monocular Vision: 3-D model and fish-eye camera  undistortion. |
+| `homography`  | Homography matrix by every 4-points-image. Higher FPS and lower precision |
 
 ## Interface
 
@@ -43,9 +48,10 @@ run for texts in an image
 :param ratio_width:  roi_image width expansion. It should not be smaller than 1.0
 :param ratio_height: roi_image height expansion. It should not be smaller than 1.0
 :param loss_thresh: if loss greater than loss_thresh --> get_rotate_crop_image
+:param mode: 'calibration' or 'homography'. when homography, ratio_width and ratio_height must be 1.0
 :return: res: roi-image list, visualized_image: draw polys in original image
 """
-res, visualized_image = autoRectifier.run(image_data, points_list, interpolation=cv2.INTER_LINEAR, ratio_width=1.0, ratio_height=1.0, loss_thresh=5.0)
+res, visualized_image = autoRectifier.run(image_data, points_list, interpolation=cv2.INTER_LINEAR, ratio_width=1.0, ratio_height=1.0, loss_thresh=5.0, mode='calibration')
 ```
 
 ## Demo
@@ -100,11 +106,15 @@ res, visualized_image = autoRectifier.run(image_data, points_list, interpolation
 
 ![](./images/vis_gt_57_3.jpg)
 
-### failure
+### calibration failure
 
 ![](./images/vis_gt_46.jpg)
 
 ![](./images/vis_gt_46_1.jpg)
+
+#### homography
+
+![](./images/vis_gt_46_1_h.jpg)
 
 ## Reference
 
@@ -115,3 +125,4 @@ res, visualized_image = autoRectifier.run(image_data, points_list, interpolation
 - [Monocular_vision](https://en.wikipedia.org/wiki/Monocular_vision)
 - [deep-text-recognition-benchmark](https://arxiv.org/abs/1904.01906)
 - [https://rrc.cvc.uab.es/](https://rrc.cvc.uab.es/)
+- [Geometric Image Transformations](https://docs.opencv.org/master/da/d54/group__imgproc__transform.html)

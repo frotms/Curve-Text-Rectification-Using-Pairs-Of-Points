@@ -27,10 +27,13 @@ if __name__ == '__main__':
     parser.add_argument('--image', type=str, help='Assign the image path')
     parser.add_argument('--txt', type=str, help='Assign the path of .txt to get points',
                         default=None)
+    parser.add_argument('--mode', type=str, help='Assign the mode: calibration or homography',
+                        default='calibration')
     args = parser.parse_args()
 
     image_path = os.path.abspath(args.image)
     txt_path = os.path.abspath(args.txt)
+    mode = args.mode
 
     if not os.path.exists(image_path):
         raise FileNotFoundError
@@ -40,14 +43,14 @@ if __name__ == '__main__':
         image = cv2.imdecode(image, cv2.IMREAD_COLOR)
 
     if image is None:
-        raise ValueError
+        raise ValueError('the image of {} is None'.format(image_path))
 
     points_list = txt_reader(txt_path)
 
     autoRectifier = AutoRectifier()
     res, visualized_image = autoRectifier.run(image, points_list, interpolation=cv2.INTER_LINEAR,
                                               ratio_width=1.0, ratio_height=1.0,
-                                              loss_thresh=5.0)
+                                              loss_thresh=5.0, mode=mode)
 
     save_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
     if not os.path.exists(save_path):

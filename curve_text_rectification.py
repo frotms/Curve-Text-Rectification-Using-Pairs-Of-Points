@@ -5,6 +5,34 @@ import cv2
 import copy
 import time
 
+def Homography(image, img_points, world_width, world_height,
+               interpolation=cv2.INTER_CUBIC, ratio_width=1.0, ratio_height=1.0):
+    _points = np.array(img_points).reshape(-1, 2).astype(np.float32)
+
+    expand_x = int(0.5 * world_width * (ratio_width - 1))
+    expand_y = int(0.5 * world_height * (ratio_height - 1))
+
+    pt_lefttop = [expand_x, expand_y]
+    pt_righttop = [expand_x + world_width, expand_y]
+    pt_leftbottom = [expand_x + world_width, expand_y + world_height]
+    pt_rightbottom = [expand_x, expand_y + world_height]
+
+    pts_std = np.float32([pt_lefttop, pt_righttop,
+                          pt_leftbottom, pt_rightbottom])
+
+    img_crop_width = int(world_width * ratio_width)
+    img_crop_height = int(world_height * ratio_height)
+
+    M = cv2.getPerspectiveTransform(_points, pts_std)
+
+    dst_img = cv2.warpPerspective(
+        image,
+        M, (img_crop_width, img_crop_height),
+        borderMode=cv2.BORDER_CONSTANT,  # BORDER_CONSTANT BORDER_REPLICATE
+        flags=interpolation)
+
+    return dst_img
+
 class CurveTextRectifier:
     """
     spatial transformer via monocular vision
@@ -360,7 +388,61 @@ class CurveTextRectifier:
         return ret, mtx, dist, rvecs, tvecs
 
 
-    def __call__(self, image_data, points, interpolation=cv2.INTER_LINEAR, ratio_width=1.0, ratio_height=1.0):
+    def dc_homo(self, img, img_points, obj_points, is_horizontal_text, interpolation=cv2.INTER_LINEAR,
+                ratio_width=1.0, ratio_height=1.0):
+        """
+        divide and conquer: homography
+        # ratio_width and ratio_height must be 1.0 here
+        """
+        _img_points = img_points.reshape(-1, 2)
+        _obj_points = obj_points.reshape(-1, 3)
+
+        homo_img_list = []
+        width_list = []
+        height_list = []
+        # divide and conquer
+        for i in range(len(_img_points) // 2 - 1):
+            new_img_points = np.zeros((4, 2)).astype(np.float32)
+            new_obj_points = np.zeros((4, 2)).astype(np.float32)
+
+            new_img_points[0:2, :] = _img_points[i:(i + 2), :2]
+            new_img_points[2:4, :] = _img_points[::-1, :][i:(i + 2), :2][::-1, :]
+
+            new_obj_points[0:2, :] = _obj_points[i:(i + 2), :2]
+            new_obj_points[2:4, :] = _obj_points[::-1, :][i:(i + 2), :2][::-1, :]
+
+            if is_horizontal_text:
+                world_width = np.abs(new_obj_points[1, 0] - new_obj_points[0, 0])
+                world_height = np.abs(new_obj_points[3, 1] - new_obj_points[0, 1])
+            else:
+                world_width = np.abs(new_obj_points[1, 1] - new_obj_points[0, 1])
+                world_height = np.abs(new_obj_points[3, 0] - new_obj_points[0, 0])
+
+            homo_img = Homography(img, new_img_points, world_width, world_height,
+                                              interpolation=interpolation,
+                                              ratio_width=ratio_width, ratio_height=ratio_height)
+
+            homo_img_list.append(homo_img)
+            _h, _w = homo_img.shape[:2]
+            width_list.append(_w)
+            height_list.append(_h)
+
+        # stitching
+        rectified_image = np.zeros((np.max(height_list), sum(width_list), 3)).astype(np.uint8)
+
+        st = 0
+        for (homo_img, w, h) in zip(homo_img_list, width_list, height_list):
+            rectified_image[:h, st:st + w, :] = homo_img
+            st += w
+
+        if not is_horizontal_text:
+            # vertical rotation
+            rectified_image = np.rot90(rectified_image, 3)
+
+        return rectified_image
+
+
+    def __call__(self, image_data, points, interpolation=cv2.INTER_LINEAR, ratio_width=1.0, ratio_height=1.0, mode='calibration'):
         """
         spatial transform for a poly text
         :param image_data:
@@ -368,6 +450,7 @@ class CurveTextRectifier:
         :param interpolation: cv2.INTER_NEAREST, cv2.INTER_LINEAR, cv2.INTER_AREA, cv2.INTER_CUBIC, cv2.INTER_LANCZOS4
         :param ratio_width:  roi_image width expansion. It should not be smaller than 1.0
         :param ratio_height: roi_image height expansion. It should not be smaller than 1.0
+        :param mode: 'calibration' or 'homography'. when homography, ratio_width and ratio_height must be 1.0
         :return:
         """
         org_h, org_w = image_data.shape[:2]
@@ -380,17 +463,25 @@ class CurveTextRectifier:
         else:
             image_coord, world_coord, new_image_size = self.vertical_text_process(points, org_size)
 
-        ret, mtx, dist, rvecs, tvecs = self.calibrate(org_size, image_coord, world_coord)
+        if mode.lower() == 'calibration':
+            ret, mtx, dist, rvecs, tvecs = self.calibrate(org_size, image_coord, world_coord)
 
-        st_size = (int(new_image_size[0]*ratio_width), int(new_image_size[1]*ratio_height))
-        dst = self.spatial_transform(image_data, st_size, mtx, dist[0], rvecs[0], tvecs[0], interpolation)
+            st_size = (int(new_image_size[0]*ratio_width), int(new_image_size[1]*ratio_height))
+            dst = self.spatial_transform(image_data, st_size, mtx, dist[0], rvecs[0], tvecs[0], interpolation)
+        elif mode.lower() == 'homography':
+            # ratio_width and ratio_height must be 1.0 here and ret set to 0.01 without loss manually
+            ret = 0.01
+            dst = self.dc_homo(image_data, image_coord, world_coord, is_horizontal_text,
+                               interpolation=interpolation, ratio_width=1.0, ratio_height=1.0)
+        else:
+            raise ValueError('mode must be ["calibration", "homography"], but got {}'.format(mode))
 
         return dst, ret
 
 
 class PlanB:
     def __call__(self, image, points, curveTextRectifier, interpolation=cv2.INTER_LINEAR,
-                 ratio_width=1.0, ratio_height=1.0, loss_thresh=5.0,square=False):
+                 ratio_width=1.0, ratio_height=1.0, loss_thresh=5.0, square=False):
         """
         Plan B using sub-image when it failed in original image
         :param image:
@@ -433,7 +524,7 @@ class PlanB:
         new_points[:, 0] -= x_min
         new_points[:, 1] -= y_min
 
-        dst_img, loss = curveTextRectifier(new_image, new_points, interpolation, ratio_width, ratio_height)
+        dst_img, loss = curveTextRectifier(new_image, new_points, interpolation, ratio_width, ratio_height, mode='calibration')
 
         return dst_img, loss
 
@@ -482,24 +573,7 @@ class AutoRectifier:
                     np.linalg.norm(_points[0] - _points[3]),
                     np.linalg.norm(_points[1] - _points[2])))
 
-            expand_x = int(0.5 * img_crop_width * (ratio_width - 1))
-            expand_y = int(0.5 * img_crop_height * (ratio_height - 1))
-            pt_lefttop = [expand_x, expand_y]
-            pt_righttop = [expand_x + img_crop_width, expand_y]
-            pt_leftbottom = [expand_x + img_crop_width, expand_y + img_crop_height]
-            pt_rightbottom = [expand_x, expand_y + img_crop_height]
-
-            pts_std = np.float32([pt_lefttop, pt_righttop,
-                                  pt_leftbottom, pt_rightbottom])
-
-            img_crop_width = int(img_crop_width * ratio_width)
-            img_crop_height = int(img_crop_height * ratio_height)
-            M = cv2.getPerspectiveTransform(_points, pts_std)
-            dst_img = cv2.warpPerspective(
-                img,
-                M, (img_crop_width, img_crop_height),
-                borderMode=cv2.BORDER_CONSTANT,#BORDER_CONSTANT BORDER_REPLICATE
-                flags=interpolation)
+            dst_img = Homography(img, _points, img_crop_width, img_crop_height, interpolation, ratio_width, ratio_height)
 
         return dst_img
 
@@ -519,7 +593,7 @@ class AutoRectifier:
 
 
     def __call__(self, image_data, points, interpolation=cv2.INTER_LINEAR,
-                 ratio_width=1.0, ratio_height=1.0, loss_thresh=5.0):
+                 ratio_width=1.0, ratio_height=1.0, loss_thresh=5.0, mode='calibration'):
         """
         rectification in strategies for a poly text
         :param image_data:
@@ -528,6 +602,7 @@ class AutoRectifier:
         :param ratio_width:  roi_image width expansion. It should not be smaller than 1.0
         :param ratio_height: roi_image height expansion. It should not be smaller than 1.0
         :param loss_thresh: if loss greater than loss_thresh --> get_rotate_crop_image
+        :param mode: 'calibration' or 'homography'. when homography, ratio_width and ratio_height must be 1.0
         :return:
         """
         _points = np.array(points).reshape(-1,2)
@@ -535,7 +610,7 @@ class AutoRectifier:
             try:
                 curveTextRectifier = CurveTextRectifier()
 
-                dst_img, loss = curveTextRectifier(image_data, points, interpolation, ratio_width, ratio_height)
+                dst_img, loss = curveTextRectifier(image_data, points, interpolation, ratio_width, ratio_height, mode)
                 if loss >= 2:
                     # for robust
                     # large loss means it cannot be reconstruct correctly, we must find other way to reconstruct
@@ -570,7 +645,7 @@ class AutoRectifier:
 
 
     def run(self, image_data, points_list, interpolation=cv2.INTER_LINEAR,
-            ratio_width=1.0, ratio_height=1.0, loss_thresh=5.0):
+            ratio_width=1.0, ratio_height=1.0, loss_thresh=5.0, mode='calibration'):
         """
         run for texts in an image
         :param image_data: numpy.ndarray. The shape is [h, w, 3]
@@ -579,6 +654,7 @@ class AutoRectifier:
         :param ratio_width:  roi_image width expansion. It should not be smaller than 1.0
         :param ratio_height: roi_image height expansion. It should not be smaller than 1.0
         :param loss_thresh: if loss greater than loss_thresh --> get_rotate_crop_image
+        :param mode: 'calibration' or 'homography'. when homography, ratio_width and ratio_height must be 1.0
         :return: res: roi-image list, visualized_image: draw polys in original image
         """
         if image_data is None:
@@ -590,12 +666,18 @@ class AutoRectifier:
                 raise ValueError
 
         if ratio_width < 1.0 or ratio_height < 1.0:
-            raise ValueError('ratio_width and ratio_height cannot be smaller than 1, but got {}'.format((ratio_width, ratio_height)))
+            raise ValueError('ratio_width and ratio_height cannot be smaller than 1, but got {}', (ratio_width, ratio_height))
+
+        if mode.lower() != 'calibration' and mode.lower() != 'homography':
+            raise ValueError('mode must be ["calibration", "homography"], but got {}'.format(mode))
+
+        if mode.lower() == 'homography' and ratio_width != 1.0 and ratio_height != 1.0:
+            raise ValueError('ratio_width and ratio_height must be 1.0 when mode is homography, but got mode:{}, ratio:({},{})'.format(mode, ratio_width, ratio_height))
 
         res = []
         for points in points_list:
             rectified_img = self(image_data, points, interpolation, ratio_width, ratio_height,
-                                 loss_thresh=loss_thresh)
+                                 loss_thresh=loss_thresh, mode=mode)
             res.append(rectified_img)
 
         # visualize
@@ -614,6 +696,8 @@ if __name__ == '__main__':
     parser.add_argument('--image', type=str, help='Assign the image path')
     parser.add_argument('--txt', type=str, help='Assign the path of .txt to get points',
                         default=None)
+    parser.add_argument('--mode', type=str, help='Assign the mode: calibration or homography',
+                        default='calibration')
     args = parser.parse_args()
 
     test_points = [106, 167, 147, 143, 264, 94, 319, 85, 443, 98, 492, 116, 557,
@@ -629,10 +713,13 @@ if __name__ == '__main__':
         image = np.array(bytearray(f.read()), dtype="uint8")
         image = cv2.imdecode(image, cv2.IMREAD_COLOR)
 
+    if image is None:
+        raise ValueError('the image of {} is None'.format(image_path))
+
     autoRectifier = AutoRectifier()
     res = autoRectifier(image, test_points, interpolation=cv2.INTER_LINEAR,
                         ratio_width=1.0, ratio_height=1.0,
-                        loss_thresh=5.0)
+                        loss_thresh=5.0, mode=args.mode)
 
     save_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
     if not os.path.exists(save_path):
