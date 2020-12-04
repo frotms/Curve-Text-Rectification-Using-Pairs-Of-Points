@@ -32,7 +32,7 @@ Results will saved in `results` directory.
 | mode          | description                                                  |
 | ------------- | ------------------------------------------------------------ |
 | `calibration` | Monocular Vision: 3-D model and fish-eye camera  undistortion. |
-| `homography`  | Homography matrix by every 4-points-image. Higher FPS and lower precision |
+| `homography`  | Split a curve text region up into several sub-4-points-bounding-box-images, homography transform and stitch. Higher FPS and lower precision |
 
 ## Interface
 
