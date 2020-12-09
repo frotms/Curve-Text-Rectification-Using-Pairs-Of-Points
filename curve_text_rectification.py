@@ -183,7 +183,7 @@ class CurveTextRectifier:
         rect_coord = np_rect_coord.reshape(-1).tolist()
 
         rect_coord = np.array(rect_coord).reshape(-1, 2)
-        world_coord = np.ones((14, 3)) * 0
+        world_coord = np.ones((len(rect_coord), 3)) * 0
 
         world_coord[:, :2] = rect_coord
 
